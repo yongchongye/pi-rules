@@ -79,7 +79,7 @@ export interface Engine {
 		targetPaths: ReadonlyArray<string>,
 	): { rules: LoadedRule[]; diagnostics: RuleDiagnostic[] };
 	formatStatic(rules: ReadonlyArray<LoadedRule>): string;
-	formatDynamic(rules: ReadonlyArray<LoadedRule>, target: string): string;
+	formatDynamic(rules: ReadonlyArray<LoadedRule>, target: string, maxResultChars?: number): string;
 	resetSession(cwd?: string): void;
 	isStaticInjected(rule: LoadedRule): boolean;
 	isDynamicInjected(scopeKey: string, rule: LoadedRule): boolean;
@@ -274,10 +274,10 @@ export function createEngine(config: PiRulesConfig, deps: EngineDeps): Engine {
 		loadDynamicRules,
 		formatStatic: (rules) =>
 			formatStaticBlock(rules, { maxRuleChars: config.maxRuleChars, maxResultChars: config.maxResultChars }),
-		formatDynamic: (rules, target) =>
+		formatDynamic: (rules, target, maxResultChars = config.maxResultChars) =>
 			formatDynamicBlock(rules, target, {
 				maxRuleChars: config.maxRuleChars,
-				maxResultChars: config.maxResultChars,
+				maxResultChars,
 			}),
 		resetSession: (cwd) => {
 			clearSession(state);

@@ -2,7 +2,14 @@ import { Theme } from "@earendil-works/pi-coding-agent";
 import { Container } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import { DynamicBorder } from "../src/ui/dynamic-border.js";
-import { RulesBanner, renderBannerLines, statusLineText } from "../src/ui/rules-banner.js";
+import {
+	activeRuleListText,
+	RulesBanner,
+	renderBannerLines,
+	setRulesStatus,
+	shortenDistinctRulePaths,
+	statusLineText,
+} from "../src/ui/rules-banner.js";
 
 class PlainTheme extends Theme {
 	constructor() {
@@ -207,11 +214,93 @@ describe("renderBannerLines", () => {
 	});
 });
 
+describe("shortenDistinctRulePaths", () => {
+	it("#given same-named rules from separate roots #when labels are shortened #then each label is distinct", () => {
+		// given
+		const rules = [
+			{ path: "/Users/cy/.claude/CLAUDE.md", relativePath: ".claude/CLAUDE.md" },
+			{
+				path: "/Users/cy/workspace/review-mr-skill/CLAUDE.md",
+				relativePath: "CLAUDE.md",
+			},
+			{
+				path: "/private/var/folders/temp/mr-review/3505.LwEl0L/CLAUDE.md",
+				relativePath: "CLAUDE.md",
+			},
+		];
+
+		// when
+		const labels = shortenDistinctRulePaths(rules);
+
+		// then
+		expect(labels).toEqual([".claude/CLAUDE.md", "…/review-mr-skill/CLAUDE.md", "…/3505.LwEl0L/CLAUDE.md"]);
+	});
+
+	it("#given active rules #when expanded text is built #then every shortened label is a bullet", () => {
+		// given
+		const rules = [
+			{ path: "/project/AGENTS.md", relativePath: "AGENTS.md" },
+			{ path: "/project/.claude/rules/typescript.md", relativePath: ".claude/rules/typescript.md" },
+		];
+
+		// when
+		const text = activeRuleListText(rules);
+
+		// then
+		expect(text).toBe("[pi-rules] 2 active\n- .claude/rules/typescript.md\n- AGENTS.md");
+	});
+
+	it("#given a list budget #when active rules exceed it #then the list stays within the budget", () => {
+		// given
+		const rules = [
+			{ path: "/project/one.md", relativePath: "one.md" },
+			{ path: "/project/two.md", relativePath: "two.md" },
+			{ path: "/project/three.md", relativePath: "three.md" },
+		];
+
+		// when
+		const text = activeRuleListText(rules, 32);
+
+		// then
+		expect(text.length).toBeLessThanOrEqual(32);
+		expect(text).toContain("[pi-rules] 3 active");
+	});
+
+	it("#given colliding rule paths #when the footer is set #then it uses distinct labels", () => {
+		// given
+		const rules = [
+			{ path: "/project/current/CLAUDE.md", relativePath: "CLAUDE.md" },
+			{ path: "/tmp/mr-review/3505/CLAUDE.md", relativePath: "CLAUDE.md" },
+		];
+		let status = "";
+
+		// when
+		setRulesStatus({ setStatus: (_key, text) => (status = text ?? "") }, rules, []);
+
+		// then
+		expect(status).toContain("…/current/CLAUDE.md");
+		expect(status).toContain("…/3505/CLAUDE.md");
+	});
+});
+
 describe("statusLineText", () => {
 	it("returns string containing '[pi-rules]' and '3' when ruleCount=3", () => {
 		const text = statusLineText({ ruleCount: 3, hasErrors: false }, fakeTheme);
 		expect(text).toContain("[pi-rules]");
 		expect(text).toContain("3 active");
+	});
+
+	it("includes loaded rule paths in sorted order", () => {
+		const text = statusLineText(
+			{
+				ruleCount: 2,
+				hasErrors: false,
+				rulePaths: ["z.md", "AGENTS.md"],
+			},
+			fakeTheme,
+		);
+
+		expect(text).toContain("[pi-rules] 2 active · AGENTS.md, z.md");
 	});
 
 	it("returns '[pi-rules] 0 active' when ruleCount=0", () => {

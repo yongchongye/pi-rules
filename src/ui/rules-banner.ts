@@ -67,15 +67,130 @@ export function renderBannerLines(props: RulesBannerProps, theme: Theme, width: 
 	return lines;
 }
 
+export const RULES_STATUS_KEY = "pi-rules";
+
+type RulePath = Pick<LoadedRule, "path" | "relativePath">;
+
 export interface StatusLineInput {
 	ruleCount: number;
 	hasErrors: boolean;
+	rulePaths?: ReadonlyArray<string>;
 }
 
-export function statusLineText(input: StatusLineInput, theme: Theme): string {
-	const base = `[pi-rules] ${input.ruleCount} active`;
+export interface RulesStatusUI {
+	readonly theme?: Theme;
+	setStatus(key: string, text: string | undefined): void;
+}
+
+/**
+ * Keep familiar project-relative labels until names collide. Colliding paths
+ * gain the shortest distinct absolute-path suffix, prefixed with an ellipsis.
+ */
+export function shortenDistinctRulePaths(rules: ReadonlyArray<RulePath>): string[] {
+	const labels = rules.map((rule) => rule.relativePath || rule.path);
+	const suffixLengths = labels.map(pathSegmentCount);
+
+	while (true) {
+		const duplicateGroups = duplicateIndexGroups(labels);
+		if (duplicateGroups.length === 0) return labels;
+
+		let changed = false;
+		for (const indexes of duplicateGroups) {
+			for (const index of indexes) {
+				const rule = rules[index];
+				if (rule === undefined) continue;
+
+				const nextLength = (suffixLengths[index] ?? 1) + 1;
+				const nextLabel = pathSuffix(rule.path, nextLength);
+				if (nextLabel === labels[index]) continue;
+
+				labels[index] = nextLabel;
+				suffixLengths[index] = nextLength;
+				changed = true;
+			}
+		}
+
+		if (!changed) {
+			return labels.map((label, index) => `${label} (${index + 1})`);
+		}
+	}
+}
+
+/**
+ * Create the complete active-rule list that is appended to injected tool output.
+ */
+export function activeRuleListText(rules: ReadonlyArray<RulePath>, maxChars = Number.POSITIVE_INFINITY): string {
+	const header = `[pi-rules] ${rules.length} active`;
+	if (maxChars < header.length) return "";
+
+	let text = header;
+	for (const [index, path] of sortRulePaths(shortenDistinctRulePaths(rules)).entries()) {
+		const line = `\n- ${path}`;
+		if (text.length + line.length <= maxChars) {
+			text += line;
+			continue;
+		}
+
+		const omission = `\n- … ${rules.length - index} more`;
+		return text.length + omission.length <= maxChars ? `${text}${omission}` : text;
+	}
+	return text;
+}
+
+export function statusLineText(input: StatusLineInput, theme?: Theme): string {
+	const paths = sortRulePaths(input.rulePaths ?? []);
+	const ruleList = paths.length > 0 ? ` · ${paths.join(", ")}` : "";
+	const base = `[pi-rules] ${input.ruleCount} active${ruleList}`;
 	if (input.hasErrors) {
+		if (theme === undefined) return `${base} · ⚠ errors`;
 		return theme.fg("muted", `${base} · `) + theme.fg("error", "⚠ errors");
 	}
-	return theme.fg("muted", base);
+	return theme === undefined ? base : theme.fg("muted", base);
+}
+
+export function setRulesStatus(
+	ui: RulesStatusUI,
+	rules: ReadonlyArray<RulePath>,
+	diagnostics: ReadonlyArray<RuleDiagnostic>,
+): void {
+	const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === "error");
+	ui.setStatus(
+		RULES_STATUS_KEY,
+		statusLineText(
+			{
+				ruleCount: rules.length,
+				hasErrors,
+				rulePaths: shortenDistinctRulePaths(rules),
+			},
+			ui.theme,
+		),
+	);
+}
+
+function duplicateIndexGroups(values: ReadonlyArray<string>): number[][] {
+	const indexesByValue = new Map<string, number[]>();
+	for (const [index, value] of values.entries()) {
+		const indexes = indexesByValue.get(value) ?? [];
+		indexes.push(index);
+		indexesByValue.set(value, indexes);
+	}
+	return [...indexesByValue.values()].filter((indexes) => indexes.length > 1);
+}
+
+function pathSegmentCount(filePath: string): number {
+	return Math.max(1, pathSegments(filePath).length);
+}
+
+function pathSuffix(filePath: string, length: number): string {
+	const segments = pathSegments(filePath);
+	if (segments.length === 0 || length >= segments.length) return filePath;
+	return `…/${segments.slice(-length).join("/")}`;
+}
+
+function pathSegments(filePath: string): string[] {
+	return filePath.split(/[\\/]+/).filter((segment) => segment.length > 0);
+}
+
+function sortRulePaths(paths: ReadonlyArray<string>): string[] {
+	return paths.filter((path) => path.length > 0).sort((a, b) => a.localeCompare(b));
 }

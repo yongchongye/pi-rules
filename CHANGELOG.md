@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Footer status lists the paths of unique rules loaded in the current session.
+- Dynamic rule-injection output now includes the active-rule list for `Ctrl+O` expansion.
 - Matcher cache reset and stats helpers for deterministic cache verification.
 
 ### Changed
 
+- Footer paths now use short, distinct suffixes when rules share the same relative path.
 - Glob matching now reuses a bounded compiled matcher cache instead of recompiling picomatch patterns for every file.
 - Dynamic rule loading now deduplicates repeated target paths and rule-file parsing work.
 

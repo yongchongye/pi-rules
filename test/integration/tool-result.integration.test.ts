@@ -115,6 +115,66 @@ describe("tool_result integration", () => {
 		expect(mutation.content[mutation.content.length - 1]?.type).toBe("text");
 	});
 
+	it("#given dynamic rules match App.tsx #when tool_result emitted #then footer status includes their paths", async () => {
+		// given
+		const { harness, ctx } = await createStartedHarness();
+
+		// when
+		await harness.emit("tool_result", readToolResult(APP_FILE_PATH), ctx);
+
+		// then
+		const status = harness.statuses.get("pi-rules")?.text;
+		expect(status).toContain(".cursor/rules/ui.mdc");
+		expect(status).toContain(".omo/rules/nested/typescript.md");
+	});
+
+	it("#given dynamic rules #when tool_result emitted #then output lists every active rule", async () => {
+		// given
+		const { harness, ctx } = await createStartedHarness();
+
+		// when
+		const result = await harness.emit("tool_result", readToolResult(APP_FILE_PATH), ctx);
+
+		// then
+		const text = injectedText(result);
+		const status = harness.statuses.get("pi-rules")?.text;
+		expect(status).toBeDefined();
+		if (status === undefined) {
+			throw new Error("Expected pi-rules footer status");
+		}
+
+		const activeCount = status.match(/\[pi-rules\] (\d+) active/)?.[1];
+		const rulePaths = (status.split(" · ")[1] ?? "").split(", ").filter(Boolean);
+		expect(activeCount).toBeDefined();
+		expect(rulePaths.length).toBeGreaterThan(0);
+		expect(text).toContain(`[pi-rules] ${activeCount} active`);
+		for (const rulePath of rulePaths) {
+			expect(text).toContain(`- ${rulePath}`);
+		}
+	});
+
+	it("#given a small result budget #when dynamic rules are injected #then output stays within the budget", async () => {
+		// given
+		const previous = process.env["PI_RULES_MAX_RESULT_CHARS"];
+		process.env["PI_RULES_MAX_RESULT_CHARS"] = "200";
+
+		try {
+			const { harness, ctx } = await createStartedHarness();
+
+			// when
+			const result = await harness.emit("tool_result", readToolResult(APP_FILE_PATH), ctx);
+
+			// then
+			expect(injectedText(result).length).toBeLessThanOrEqual(200);
+		} finally {
+			if (previous === undefined) {
+				delete process.env["PI_RULES_MAX_RESULT_CHARS"];
+			} else {
+				process.env["PI_RULES_MAX_RESULT_CHARS"] = previous;
+			}
+		}
+	});
+
 	it('"#given read tool result for App.tsx #when emitted #then injected text contains "Additional project instructions matched for"', async () => {
 		// given
 		const { harness, ctx } = await createStartedHarness();

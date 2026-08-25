@@ -135,11 +135,30 @@ Deduplication is in-memory per session by `realPath + content hash`. No filesyst
 
 All commands work in both UI and plain-text modes.
 
-## TUI widget
+## TUI footer status
 
-On session start, a banner appears above the editor with a `[pi-rules]` prefix and a list of top rules. Active rules show a `●` indicator; rules with warnings show `⚠`. The banner dismisses on the first `before_agent_start` event.
+In TUI mode, pi-rules adds a persistent status line to the footer. It shows the number and paths of unique rules loaded in the current session:
 
-A persistent status line reads `[pi-rules] N active` and updates as rules are discovered or rescanned.
+```text
+[pi-rules] 3 active · AGENTS.md, .omo/rules/core.md, .cursor/rules/ui.mdc
+```
+
+Paths remain project-relative where possible. When two paths would have the same label, pi-rules adds the shortest suffix that makes them distinct:
+
+```text
+[pi-rules] 3 active · .claude/CLAUDE.md, …/review-mr-skill/CLAUDE.md, …/3505.LwEl0L/CLAUDE.md
+```
+
+When dynamic rules are injected, the related tool output also includes the complete list:
+
+```text
+[pi-rules] 3 active
+- .claude/CLAUDE.md
+- …/review-mr-skill/CLAUDE.md
+- …/3505.LwEl0L/CLAUDE.md
+```
+
+Press `Ctrl+O` to expand that tool output. Use `/rules list` for the current static rule list, or `/rules paths` for its absolute paths. The status updates after session start, static rescans, dynamic rule discovery, and `/reload-rules`. Pi truncates the line when the terminal is narrow.
 
 ## Configuration
 
@@ -149,7 +168,6 @@ A persistent status line reads `[pi-rules] N active` and updates as rules are di
 |------|------|---------|---------|
 | `pi-rules-disabled` | `boolean` | `false` | Disable all injection |
 | `pi-rules-mode` | `string` | `both` | `static` \| `dynamic` \| `both` \| `off` |
-| `pi-rules-widget` | `boolean` | `true` | Show banner and status line |
 
 ### Environment variables
 
@@ -172,7 +190,7 @@ Rule files are prompt and context input. Do NOT load untrusted repositories. All
 | Duplicate injection | Automatically deduplicated per session. Try `/reload-rules` to reset. |
 | Extension not loaded | Confirm `pi.extensions` in your `package.json` or use `pi -e ./src/index.ts` for one-shot. |
 | Context too large | Adjust `PI_RULES_MAX_RULE_CHARS` and `PI_RULES_MAX_RESULT_CHARS`. |
-| TUI widget missing | Check `pi-rules-widget` flag is true and your terminal supports the relevant glyphs. |
+| Footer status missing | Check that pi is running in TUI mode. Run `/rules status` to inspect the loaded rules. |
 
 ## Development
 

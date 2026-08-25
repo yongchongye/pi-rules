@@ -181,6 +181,20 @@ describe("piRulesExtension", () => {
 		expect(fakePi.entries).toEqual([{ customType: "pi-rules.scan", data: { cwd, reason: "reload" } }]);
 	});
 
+	it("#given project has AGENTS.md #when session_start emitted #then footer status lists loaded rule path", async () => {
+		// given
+		const project = createProject();
+		project.write("AGENTS.md", "Use project rules.");
+		const fakePi = registerExtension();
+		const cwd = projectCwd(project);
+
+		// when
+		await fakePi.emit("session_start", sessionStartEvent(), fakePi.makeCtx({ cwd }));
+
+		// then
+		expect(fakePi.statuses.get("pi-rules")?.text).toContain("[pi-rules] 1 active · AGENTS.md");
+	});
+
 	it("#given session_start emitted #when handler runs twice #then state reset between", async () => {
 		// given
 		const project = createProject();

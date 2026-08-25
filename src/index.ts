@@ -12,6 +12,7 @@ import { hashContent } from "./rules/matcher.js";
 import { findProjectRoot } from "./rules/project-root.js";
 import { extractToolPaths } from "./rules/tool-paths.js";
 import type { LoadedRule, PiRulesConfig, RuleDiagnostic } from "./rules/types.js";
+import { activeRuleListText, type RulesStatusUI, setRulesStatus } from "./ui/rules-banner.js";
 
 type PiRulesMode = PiRulesConfig["mode"];
 
@@ -37,8 +38,14 @@ type LogRule = {
 	reason: string;
 };
 
+type RuleLoadResult = {
+	rules: ReadonlyArray<LoadedRule>;
+	diagnostics: ReadonlyArray<RuleDiagnostic>;
+};
+
 function sessionId(ctx: ExtensionContext): string | undefined {
 	try {
+		// SAFETY: Extension contexts expose a session manager, but older hosts may omit getSessionId.
 		const manager = ctx.sessionManager as unknown as { getSessionId?: () => string };
 		return manager.getSessionId?.();
 	} catch {
@@ -106,7 +113,44 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		findProjectRoot,
 		extractToolPaths,
 	});
-	registerSlashCommands(pi, engine);
+	const statusRules = new Map<string, LoadedRule>();
+	let staticStatusKeys = new Set<string>();
+	let staticStatusDiagnostics: ReadonlyArray<RuleDiagnostic> = [];
+	let dynamicStatusDiagnostics: ReadonlyArray<RuleDiagnostic> = [];
+
+	registerSlashCommands(pi, engine, (ctx, loaded, reset) => {
+		replaceStaticRulesStatus(ctx.ui, loaded, reset);
+	});
+
+	function renderRulesStatus(ui: RulesStatusUI): void {
+		setRulesStatus(ui, [...statusRules.values()], [...staticStatusDiagnostics, ...dynamicStatusDiagnostics]);
+	}
+
+	function replaceStaticRulesStatus(ui: RulesStatusUI, loaded: RuleLoadResult, reset: boolean): void {
+		if (reset) {
+			statusRules.clear();
+			staticStatusKeys = new Set<string>();
+			dynamicStatusDiagnostics = [];
+		}
+
+		for (const key of staticStatusKeys) {
+			statusRules.delete(key);
+		}
+		staticStatusKeys = new Set(loaded.rules.map((rule) => rule.realPath));
+		for (const rule of loaded.rules) {
+			statusRules.set(rule.realPath, rule);
+		}
+		staticStatusDiagnostics = loaded.diagnostics;
+		renderRulesStatus(ui);
+	}
+
+	function addDynamicRulesStatus(ui: RulesStatusUI, loaded: RuleLoadResult): void {
+		for (const rule of loaded.rules) {
+			statusRules.set(rule.realPath, rule);
+		}
+		dynamicStatusDiagnostics = [...dynamicStatusDiagnostics, ...loaded.diagnostics];
+		renderRulesStatus(ui);
+	}
 
 	function syncConfigFromFlags(): void {
 		const disabled = pi.getFlag("pi-rules-disabled");
@@ -126,6 +170,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const startedAt = Date.now();
 		syncConfigFromFlags();
 		engine.resetSession(ctx.cwd);
+		const loaded = engine.loadStaticRules(ctx.cwd);
+		replaceStaticRulesStatus(ctx.ui, loaded, true);
 		await appendPiRulesLog({
 			event: "reset",
 			hook: "session_start",
@@ -148,6 +194,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	pi.on("session_compact", async (_event, ctx) => {
 		const startedAt = Date.now();
 		engine.resetSession(ctx.cwd);
+		const loaded = engine.loadStaticRules(ctx.cwd);
+		replaceStaticRulesStatus(ctx.ui, loaded, true);
 		await appendPiRulesLog({
 			event: "reset",
 			hook: "session_compact",
@@ -173,6 +221,11 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			mode: engine.config.mode,
 		};
 		if (engine.config.disabled || engine.config.mode === "off" || engine.config.mode === "dynamic") {
+			replaceStaticRulesStatus(
+				ctx.ui,
+				{ rules: [], diagnostics: [] },
+				engine.config.disabled || engine.config.mode === "off",
+			);
 			await appendCheckLog(common, {
 				action: "skip",
 				reason: engine.config.disabled ? "disabled" : "mode-disabled",
@@ -183,6 +236,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		}
 
 		const loaded = engine.loadStaticRules(ctx.cwd);
+		replaceStaticRulesStatus(ctx.ui, loaded, false);
 		const nativeContextPaths = new Set(
 			event.systemPromptOptions.contextFiles?.flatMap((contextFile) => pathKeys(contextFile.path)) ?? [],
 		);
@@ -248,6 +302,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			toolCallId: event.toolCallId,
 		};
 		if (engine.config.disabled || engine.config.mode === "off" || engine.config.mode === "static" || event.isError) {
+			if (engine.config.disabled || engine.config.mode === "off") {
+				replaceStaticRulesStatus(ctx.ui, { rules: [], diagnostics: [] }, true);
+			}
 			await appendCheckLog(common, {
 				action: "skip",
 				reason: toolSkipReason(engine.config.disabled, engine.config.mode, event.isError),
@@ -290,6 +347,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			ctx.cwd,
 			pendingFingerprints.map((target) => target.targetPath),
 		);
+		addDynamicRulesStatus(ctx.ui, loaded);
 		engine.commitDynamicTargetFingerprints(fingerprints);
 		const decisions = loaded.rules.map((rule) => {
 			if (engine.isStaticInjected(rule)) {
@@ -320,7 +378,14 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		}
 
 		const firstPendingTarget = pendingFingerprints[0]?.targetPath ?? firstTargetPath;
-		const block = engine.formatDynamic(rules, displayPath(ctx.cwd, firstPendingTarget));
+		const activeRuleList = activeRuleListText(
+			[...statusRules.values()],
+			Math.floor(engine.config.maxResultChars / 4),
+		);
+		const activeRuleListBlock = activeRuleList.length === 0 ? "" : `\n\n${activeRuleList}`;
+		const dynamicBudget = Math.max(0, engine.config.maxResultChars - activeRuleListBlock.length);
+		const dynamicBlock = engine.formatDynamic(rules, displayPath(ctx.cwd, firstPendingTarget), dynamicBudget);
+		const block = `${dynamicBlock}${activeRuleListBlock}`;
 		for (const rule of rules) {
 			engine.markDynamicInjected(DYNAMIC_SCOPE, rule);
 		}

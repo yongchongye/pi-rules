@@ -5,7 +5,17 @@ import type { LoadedRule, MatchReason, RuleDiagnostic } from "./rules/types.js";
 
 const RULE_SUBCOMMANDS = ["list", "show", "paths", "status"] as const;
 
-export function registerSlashCommands(pi: ExtensionAPI, engine: Engine): void {
+export type StaticRulesLoadedHandler = (
+	ctx: ExtensionCommandContext,
+	loaded: { rules: ReadonlyArray<LoadedRule>; diagnostics: ReadonlyArray<RuleDiagnostic> },
+	reset: boolean,
+) => void;
+
+export function registerSlashCommands(
+	pi: ExtensionAPI,
+	engine: Engine,
+	onStaticRulesLoaded?: StaticRulesLoadedHandler,
+): void {
 	pi.registerCommand("rules", {
 		description: "Inspect loaded pi-rules.",
 		getArgumentCompletions: (prefix) => {
@@ -21,6 +31,7 @@ export function registerSlashCommands(pi: ExtensionAPI, engine: Engine): void {
 			const tokens = args.trim().length === 0 ? [] : args.trim().split(/\s+/);
 			const subcommand = tokens[0] ?? "";
 			const loaded = engine.loadStaticRules(ctx.cwd);
+			onStaticRulesLoaded?.(ctx, loaded, false);
 
 			if (subcommand === "" || subcommand === "status") {
 				notify(ctx, buildSummaryText(loaded.rules, loaded.diagnostics));
@@ -63,6 +74,7 @@ export function registerSlashCommands(pi: ExtensionAPI, engine: Engine): void {
 		handler: async (_args, ctx) => {
 			engine.resetSession(ctx.cwd);
 			const loaded = engine.loadStaticRules(ctx.cwd);
+			onStaticRulesLoaded?.(ctx, loaded, true);
 			notify(ctx, buildReloadText(loaded.rules, loaded.diagnostics));
 		},
 	});
